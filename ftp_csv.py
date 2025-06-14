@@ -4,7 +4,8 @@ import csv
 import logging
 import requests
 import ftplib
-from tkinter import Tk, Frame, Button, Entry, END, Listbox, Label, Toplevel, StringVar, messagebox
+from datetime import datetime
+from tkinter import Button, Entry, END, Frame, messagebox, Listbox, Label, StringVar, Scrollbar, Tk
 
 # === CONFIGURATION ===
 VALID_DIR = "valid_files"
@@ -17,6 +18,7 @@ EXPECTED_HEADERS = ["batch_id", "timestamp"] + \
 class FTPClient:
     def __init__(self):
         self.ftp = None
+        self.downloaded_files = []
 
     def connect(self, host, user, password):
         self.ftp = ftplib.FTP()
@@ -30,6 +32,31 @@ class FTPClient:
 
     def get_ftp_list(self):
         return self.ftp.nlst()
+
+    def is_connected(self):
+        return self.ftp is not None
+
+    def search_files(self, keyword):
+        all_files = self.get_ftp_list()
+        matched_files = [f for f in all_files if keyword in f]
+
+        if not matched_files:
+            messagebox.showerror('Error', "There is no file with this name!")
+
+        return matched_files
+
+    def download_file(self, filename):
+        # content = []
+        # self.ftp.retrbinary(f'RETR {filename}', content.append)
+        # return "\n".join(content)
+        from io import StringIO
+        content = []
+
+        def handle_binary(data):
+            content.append(data.decode("utf-8"))
+
+        self.ftp.retrbinary(f'RETR {filename}', callback=handle_binary)
+        return ''.join(content)
 
 
 class FileValidator:
@@ -125,9 +152,13 @@ class Logger:
 class App:
     def __init__(self, root):
         self.root = root
-        self.file_listbox = None
         self.files = None
+        self.file_listbox = None
+        self.valid_files_listbox = None
+        self.error_logs_listbox = None
+        self.search_var = StringVar()
         self.ftp_client = FTPClient()
+        self.logger = Logger()
         self.build_gui()
 
     def ftp_client_connect(self):
@@ -161,6 +192,8 @@ class App:
             self.user_var.set("")
             self.pass_var.set("")
 
+            self.search_var.set('')
+
             # Connection Button
             self.ftp_connect_btn.config(
                 text="Connect to FTP", command=self.ftp_client_connect, bg='teal')
@@ -183,6 +216,134 @@ class App:
     def remove_files(self):
         self.files = None
         self.file_listbox.delete(0, END)
+
+    def download_file(self):
+        if not self.ftp_client.is_connected():
+            messagebox.showerror("Error", "Not connected to FTP")
+            return
+
+        selected_file = self.file_listbox.curselection()
+        if not selected_file:
+            messagebox.showerror("Error", "No file selected")
+            return
+
+        filename = self.file_listbox.get(selected_file)
+        if filename in self.ftp_client.downloaded_files:
+            messagebox.showwarning(
+                "Warning", f"File '{filename}' already downloaded or attempted.")
+            return
+
+        self.download_status.config(text="Downloading...", foreground="blue")
+        self.download_btn.config(state="disabled", bg="white")
+
+        def after_delay():
+            if not filename.lower().endswith('.csv'):
+                self.download_status.config(
+                    text="Fail", foreground="red")
+                error_msg = f"Invalid file extension for '{filename}'. Only '.csv' files are allowed."
+                self.logger.log(error_msg)
+                self.load_error_logs()
+                messagebox.showerror("Invalid File", error_msg)
+                self.ftp_client.downloaded_files.append(filename)
+                self.download_status.config(text="Idle", foreground="black")
+                self.download_btn.config(state="normal", bg="teal")
+                return
+
+            try:
+                size = self.ftp_client.ftp.size(filename)
+                if size == 0:
+                    self.download_status.config(
+                        text="Fail", foreground="red")
+                    error_msg = f"File '{filename}' is empty (zero size)."
+                    self.logger.log(error_msg)
+                    self.load_error_logs()
+                    messagebox.showwarning("Warning", error_msg)
+                    self.ftp_client.downloaded_files.append(filename)
+                    self.download_status.config(
+                        text="Idle", foreground="black")
+                    self.download_btn.config(state="normal", bg="teal")
+                    return
+            except Exception as e:
+                self.download_status.config(
+                    text="Fail", foreground="red")
+                self.logger.log(f"Download size check error: {str(e)}")
+                self.load_error_logs()
+                self.ftp_client.downloaded_files.append(filename)
+                self.download_status.config(text="Idle", foreground="black")
+                self.download_btn.config(state="normal", bg="teal")
+                return
+
+            try:
+                content = self.ftp_client.download_file(filename)
+                valid, msg = FileValidator.validate(content)
+                if valid:
+                    self.download_status.config(
+                        text="Success", foreground="green")
+                    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                    new_filename = f"MED_DATA_{timestamp}.csv"
+                    path = os.path.join(VALID_DIR, new_filename)
+                    with open(path, 'w') as f:
+                        f.write(content)
+                    self.valid_files_listbox.insert(END, new_filename)
+                    self.valid_files_listbox.see(END)
+                    self.valid_files_listbox.selection_clear(0, END)
+                    self.valid_files_listbox.selection_set(END)
+                    messagebox.showinfo(
+                        "Success", f"File saved as '{new_filename}' in '{VALID_DIR}'.")
+                else:
+                    self.download_status.config(
+                        text="Fail", foreground="red")
+                    self.logger.log(
+                        f"Validation failed for '{filename}': {msg}")
+                    self.load_error_logs()
+                    messagebox.showerror("Validation Error",
+                                         f"Validation failed:\n{msg}")
+            except Exception as e:
+                self.download_status.config(
+                    text="Fail", foreground="red")
+                self.logger.log(f"Download error: {str(e)}")
+                self.load_error_logs()
+                messagebox.showerror(
+                    "Download Error", f"Failed to download/process file:\n{e}")
+            finally:
+                self.ftp_client.downloaded_files.append(filename)
+                self.download_status.config(text="Idle", foreground="black")
+                self.download_btn.config(state="normal", bg="teal")
+
+        self.download_status.after(
+            3000, after_delay)
+
+    def load_error_logs(self):
+        """Load error logs from the file and update the error_logs_listbox."""
+        try:
+            if os.path.exists(ERROR_LOG_FILE):
+                with open(ERROR_LOG_FILE, "r") as file:
+                    logs = file.readlines()
+                self.error_logs_listbox.delete(0, END)
+                for log in logs:
+                    self.error_logs_listbox.insert(END, log.strip())
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load error logs: {e}")
+
+    def searchFileName(self):
+        if not self.ftp_client.is_connected():
+            messagebox.showerror("Error", "Not connected to FTP")
+            return
+        search_value = self.search_var.get().strip()
+        if not search_value:
+            messagebox.showerror("Error", "Please enter search keyword")
+            return
+        try:
+            found_files = self.ftp_client.search_files(search_value)
+            self.file_listbox.delete(0, END)
+            for file in found_files:
+                self.file_listbox.insert(END, file)
+        except Exception as e:
+            messagebox.showerror("Error", f"Search failed: {e}")
+
+    def clearSearch(self):
+        self.search_var.set('')
+        self.list_files()
 
     def build_gui(self):
         self.root.title("FTP CSV Validator")
@@ -238,11 +399,12 @@ class App:
         Label(file_header_frame, text="Available Files",
               font=("Arial", 12, "bold")).pack(side="left")
         # Search Entry and Buttons
-        Button(file_header_frame, text="Clear Search", width=10, pady=0, foreground='teal',
+        Button(file_header_frame, command=self.clearSearch, text="Clear Search", width=10, pady=0, foreground='teal',
                ).pack(side="right")
-        Button(file_header_frame, text="Search", width=10, pady=0, foreground='teal'
+        Button(file_header_frame, command=self.searchFileName, text="Search", width=10, pady=0, foreground='teal'
                ).pack(side="right", padx=3)
-        Entry(file_header_frame, width=30).pack(side="right")
+        Entry(file_header_frame, textvariable=self.search_var,
+              width=30).pack(side="right")
 
         # File Lists
         file_frame = Frame(main_frame)
@@ -250,14 +412,26 @@ class App:
         self.file_listbox = Listbox(file_frame, width=60, height=10)
         self.file_listbox.pack(side="left", fill="both", expand=True)
 
+        scrollbar = Scrollbar(file_frame)
+        scrollbar.pack(side="right", fill="y")
+        self.file_listbox.config(yscrollcommand=scrollbar.set)
+        scrollbar.config(command=self.file_listbox.yview)
+
         # File Lists Footer
         file_footer_frame = Frame(main_frame)
         file_footer_frame.pack(fill="x", expand=True)
-        # Download Button
-        Label(file_footer_frame, text="Download Status: Downloading...", font=("Arial", 10)).pack(
+
+        # Download Status
+        Label(file_footer_frame, text="Download Status:", font=("Arial", 10)).pack(
             side="left")
-        Button(file_footer_frame, text="Download File", width=20, pady=3, foreground='white', background='teal',
-               ).pack(side="right")
+        self.download_status = Label(
+            file_footer_frame, text="Idle", foreground="black")
+        self.download_status.pack(side="left")
+
+        # Download Button
+        self.download_btn = Button(file_footer_frame, command=self.download_file, text="Download File", width=20, pady=3, foreground='white', background='teal',
+                                   )
+        self.download_btn.pack(side="right")
 
         # Valid Files Frame
         valid_files_frame = Frame(main_frame)
@@ -268,6 +442,11 @@ class App:
             valid_files_frame, width=60, height=5)
         self.valid_files_listbox.pack(side="left", fill="both", expand=True)
 
+        valid_scrollbar = Scrollbar(valid_files_frame)
+        valid_scrollbar.pack(side="right", fill="y")
+        self.valid_files_listbox.config(yscrollcommand=valid_scrollbar.set)
+        valid_scrollbar.config(command=self.valid_files_listbox.yview)
+
         # Error Logs Frame
         error_logs_frame = Frame(main_frame)
         error_logs_frame.pack(fill="both", expand=True, pady=5)
@@ -276,7 +455,13 @@ class App:
         self.error_logs_listbox = Listbox(error_logs_frame, width=60, height=5)
         self.error_logs_listbox.pack(side="left", fill="both", expand=True)
 
+        error_scrollbar = Scrollbar(error_logs_frame)
+        error_scrollbar.pack(side="right", fill="y")
+        self.error_logs_listbox.config(yscrollcommand=error_scrollbar.set)
+        error_scrollbar.config(command=self.error_logs_listbox.yview)
 
-root = Tk()
-app = App(root)
-root.mainloop()
+
+if __name__ == "__main__":
+    root = Tk()
+    app = App(root)
+    root.mainloop()

@@ -1,4 +1,5 @@
-from ftp_csv import FTPClient, FileValidator
+from ftp_csv import FTPClient, FileValidator, Logger
+from unittest.mock import patch, Mock
 
 
 class TestFTP:
@@ -12,13 +13,13 @@ class TestFTP:
     def test_connect_to_ftp(self):
         is_valid, message = self.ftp_client.connect(
             '127.0.0.1', 'wla', 'wla123')
-        assert is_valid is True
+        assert is_valid == True
         assert message == "Connected to FTP server"
 
     def test_disconnect_to_ftp(self):
         self.ftp_client.connect('127.0.0.1', 'wla', 'wla123')
         is_valid, message = self.ftp_client.disconnect()
-        assert is_valid is False
+        assert is_valid == False
         assert message == "Disconnected to FTP server"
 
     def test_valid_csv_files(self):
@@ -55,3 +56,25 @@ class TestFTP:
         is_valid, message = FileValidator.validate(exceeds_limit)
         assert is_valid == False
         assert "Value exceeds 9.9" in message
+
+    @patch("requests.get")
+    def test_get_uuid_success(self, mock_get):
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = ["1234-abcd"]
+        mock_get.return_value = mock_response
+
+        client = Logger()
+        result = client.get_uuid()
+
+        assert result == "1234-abcd"
+
+    @patch("requests.get")
+    def test_get_uuid_api_failure(self, mock_get):
+        # Simulate a network error
+        mock_get.side_effect = Exception("API down")
+
+        client = Logger()
+        result = client.get_uuid()
+
+        assert result == "unknown_uuid"
