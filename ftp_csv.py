@@ -1,5 +1,17 @@
+import os
+import re
+import csv
+import logging
+import requests
 import ftplib
-from tkinter import Tk, Frame, Button, Entry, Listbox, Label, Toplevel, StringVar, messagebox
+from tkinter import Tk, Frame, Button, Entry, END, Listbox, Label, Toplevel, StringVar, messagebox
+
+# === CONFIGURATION ===
+VALID_DIR = "valid_files"
+ERROR_LOG_DIR = "error_logs"
+ERROR_LOG_FILE = os.path.join(ERROR_LOG_DIR, "error_log.txt")
+EXPECTED_HEADERS = ["batch_id", "timestamp"] + \
+    [f"reading{i}" for i in range(1, 11)]
 
 
 class FTPClient:
@@ -16,10 +28,105 @@ class FTPClient:
         self.ftp.quit()
         return False, "Disconnected to FTP server"
 
+    def get_ftp_list(self):
+        return self.ftp.nlst()
+
+
+class FileValidator:
+    @staticmethod
+    def validate(file_content):
+        try:
+            reader = csv.reader(file_content.splitlines())
+            headers = next(reader, None)
+
+            if not FileValidator.validate_headers(headers):
+                return False, f"Incorrect or missing headers: {headers}"
+
+            batch_ids = set()
+            for row_num, row in enumerate(reader, start=2):
+                if not FileValidator.validate_row_length(row):
+                    return False, f"Row {row_num} has missing columns"
+                if not FileValidator.validate_unique_batch_id(row[0], batch_ids):
+                    return False, f"Duplicate batch_id {row[0]} on row {row_num}"
+                is_valid, msg = FileValidator.validate_readings(
+                    row[2:], row_num)
+                if not is_valid:
+                    return False, msg
+
+        except Exception as e:
+            return False, f"Malformed file error: {str(e)}"
+        return True, "Valid"
+
+    @staticmethod
+    def validate_headers(headers):
+        return headers == EXPECTED_HEADERS
+
+    @staticmethod
+    def validate_row_length(row):
+        return len(row) == 12
+
+    @staticmethod
+    def validate_unique_batch_id(batch_id, batch_ids):
+        if batch_id in batch_ids:
+            return False
+        batch_ids.add(batch_id)
+        return True
+
+    @staticmethod
+    def validate_readings(readings, row_num):
+        for i, reading in enumerate(readings, start=1):
+            try:
+                value = float(reading)
+                if value > 9.9:
+                    return False, f"Value exceeds 9.9 in reading{i} on row {row_num}: {value}"
+                if not re.match(r"^\d+(\.\d{1,3})?$", reading):
+                    return False, f"Invalid decimal format in reading{i} on row {row_num}: {reading}"
+            except ValueError:
+                return False, f"Non-numeric reading{i} on row {row_num}: {reading}"
+        return True, None
+
+
+class Logger:
+    def __init__(self):
+        self.ensure_directories()
+        # Clear the error log file at startup
+        if os.path.exists(ERROR_LOG_FILE):
+            # Truncate the file to clear old logs
+            open(ERROR_LOG_FILE, 'w').close()
+        logging.basicConfig(
+            filename=ERROR_LOG_FILE,
+            filemode='a',  # Append mode ensures new logs are added
+            level=logging.ERROR,
+            format="%(asctime)s - ERROR - [UUID: %(uuid)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+
+    def ensure_directories(self):
+        os.makedirs(VALID_DIR, exist_ok=True)
+        os.makedirs(ERROR_LOG_DIR, exist_ok=True)
+
+    def get_uuid(self):
+        try:
+            response = requests.get(
+                "https://www.uuidtools.com/api/generate/v1")
+            response.raise_for_status()
+            uuid_list = response.json()
+            return uuid_list[0] if uuid_list else "unknown_uuid"
+        except Exception as e:
+            logging.error(f"UUID generation failed: {str(e)}", extra={
+                          "uuid": "unknown_uuid"})
+            return "unknown_uuid"
+
+    def log(self, message):
+        uuid = self.get_uuid()
+        logging.error(message, extra={"uuid": uuid})
+
 
 class App:
     def __init__(self, root):
         self.root = root
+        self.file_listbox = None
+        self.files = None
         self.ftp_client = FTPClient()
         self.build_gui()
 
@@ -27,7 +134,7 @@ class App:
         try:
             self.ftp_client.connect(
                 self.host_var.get(), self.user_var.get(), self.pass_var.get())
-            
+
             # Change entry state to disabled
             self.host_entry.config(state='disabled')
             self.user_entry.config(state='disabled')
@@ -37,6 +144,8 @@ class App:
             self.ftp_connect_btn.config(
                 text="Disconnect", bg='red', command=self.ftp_client_disconnect)
             messagebox.showinfo("Success", "Connected to FTP Server")
+
+            self.list_files()
         except Exception as e:
             messagebox.showerror("Error", f"FTP connection failed: {e}")
 
@@ -57,8 +166,23 @@ class App:
                 text="Connect to FTP", command=self.ftp_client_connect, bg='teal')
             messagebox.showinfo(
                 "Disconnected", "Disconnected from FTP Server")
+
+            self.remove_files()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to disconnect: {e}")
+
+    def list_files(self):
+        try:
+            self.files = self.ftp_client.get_ftp_list()
+            self.file_listbox.delete(0, END)
+            for file in self.files:
+                self.file_listbox.insert(END, file)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to list files: {e}")
+
+    def remove_files(self):
+        self.files = None
+        self.file_listbox.delete(0, END)
 
     def build_gui(self):
         self.root.title("FTP CSV Validator")
@@ -73,7 +197,7 @@ class App:
 
         # Header
         Label(navbar_header, text="FTP Connection",
-            font=("Arial", 12, "bold")).pack(side="left")
+              font=("Arial", 12, "bold")).pack(side="left")
         navbar_frame = Frame(main_frame)
         navbar_frame.pack(fill="x", pady=15)
 
@@ -92,7 +216,8 @@ class App:
         # Password Entry
         Label(navbar_frame, text="Password").pack(side="left")
         self.pass_var = StringVar()
-        self.pass_entry = Entry(navbar_frame, textvariable=self.pass_var, show='*')
+        self.pass_entry = Entry(
+            navbar_frame, textvariable=self.pass_var, show='*')
         self.pass_entry.pack(side="left", padx=10)
 
         # FTP Server Connection Button
