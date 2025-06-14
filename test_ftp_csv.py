@@ -57,6 +57,7 @@ class TestFTP:
         assert is_valid == False
         assert "Value exceeds 9.9" in message
 
+    # Integration Testing 
     @patch("requests.get")
     def test_get_uuid_success(self, mock_get):
         mock_response = Mock()
