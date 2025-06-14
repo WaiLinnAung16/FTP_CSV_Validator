@@ -1,5 +1,5 @@
 from ftp_csv import FTPClient, FileValidator, Logger
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, MagicMock
 
 
 class TestFTP:
@@ -9,16 +9,25 @@ class TestFTP:
         self.valid_csv_content = """batch_id,timestamp,reading1,reading2,reading3,reading4,reading5,reading6,reading7,reading8,reading9,reading10
                                     1,2023-01-01,1.234,2.345,3.456,4.567,5.678,6.789,7.890,8.901,9.012,0.123
                                     2,2023-01-02,1.234,2.345,3.456,4.567,5.678,6.789,7.890,8.901,9.012,0.123"""
+    @patch("ftplib.FTP")
+    def test_connect_to_ftp(self, mock_ftp_class):
+        mock_ftp_instance = MagicMock()
+        mock_ftp_class.return_value = mock_ftp_instance
 
-    def test_connect_to_ftp(self):
-        is_valid, message = self.ftp_client.connect(
-            '127.0.0.1', 'wla', 'wla123')
-        assert is_valid == True
+        is_valid, message = self.ftp_client.connect("host", "user", "pass")
+
+        assert is_valid is True
         assert message == "Connected to FTP server"
 
-    def test_disconnect_to_ftp(self):
-        self.ftp_client.connect('127.0.0.1', 'wla', 'wla123')
+    @patch("ftplib.FTP")
+    def test_disconnect_to_ftp(self, mock_ftp_class):
+        mock_ftp_instance = MagicMock()
+        mock_ftp_class.return_value = mock_ftp_instance
+
+        self.ftp_client.connect("host", "user", "pass")
         is_valid, message = self.ftp_client.disconnect()
+
+        mock_ftp_instance.quit.assert_called_once()
         assert is_valid == False
         assert message == "Disconnected to FTP server"
 
