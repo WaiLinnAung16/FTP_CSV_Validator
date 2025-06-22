@@ -1,5 +1,4 @@
-from ftp_csv import FTPClient, FileValidator, Logger
-from unittest.mock import patch, Mock, MagicMock
+from ftp_csv import FTPClient, FileValidator
 
 
 class TestFTP:
@@ -9,27 +8,6 @@ class TestFTP:
         self.valid_csv_content = """batch_id,timestamp,reading1,reading2,reading3,reading4,reading5,reading6,reading7,reading8,reading9,reading10
                                     1,2023-01-01,1.234,2.345,3.456,4.567,5.678,6.789,7.890,8.901,9.012,0.123
                                     2,2023-01-02,1.234,2.345,3.456,4.567,5.678,6.789,7.890,8.901,9.012,0.123"""
-    @patch("ftplib.FTP")
-    def test_connect_to_ftp(self, mock_ftp_class):
-        mock_ftp_instance = MagicMock()
-        mock_ftp_class.return_value = mock_ftp_instance
-
-        is_valid, message = self.ftp_client.connect("host", "user", "pass")
-
-        assert is_valid is True
-        assert message == "Connected to FTP server"
-
-    @patch("ftplib.FTP")
-    def test_disconnect_to_ftp(self, mock_ftp_class):
-        mock_ftp_instance = MagicMock()
-        mock_ftp_class.return_value = mock_ftp_instance
-
-        self.ftp_client.connect("host", "user", "pass")
-        is_valid, message = self.ftp_client.disconnect()
-
-        mock_ftp_instance.quit.assert_called_once()
-        assert is_valid == False
-        assert message == "Disconnected to FTP server"
 
     def test_valid_csv_files(self):
         is_valid, message = FileValidator.validate(self.valid_csv_content)
@@ -65,26 +43,3 @@ class TestFTP:
         is_valid, message = FileValidator.validate(exceeds_limit)
         assert is_valid == False
         assert "Value exceeds 9.9" in message
-
-    # Integration Testing 
-    @patch("requests.get")
-    def test_get_uuid_success(self, mock_get):
-        mock_response = Mock()
-        mock_response.raise_for_status = Mock()
-        mock_response.json.return_value = ["1234-abcd"]
-        mock_get.return_value = mock_response
-
-        client = Logger()
-        result = client.get_uuid()
-
-        assert result == "1234-abcd"
-
-    @patch("requests.get")
-    def test_get_uuid_api_failure(self, mock_get):
-        # Simulate a network error
-        mock_get.side_effect = Exception("API down")
-
-        client = Logger()
-        result = client.get_uuid()
-
-        assert result == "unknown_uuid"

@@ -46,9 +46,6 @@ class FTPClient:
         return matched_files
 
     def download_file(self, filename):
-        # content = []
-        # self.ftp.retrbinary(f'RETR {filename}', content.append)
-        # return "\n".join(content)
         from io import StringIO
         content = []
 
@@ -359,7 +356,7 @@ class App:
         # Header
         Label(navbar_header, text="FTP Connection",
               font=("Arial", 12, "bold")).pack(side="left")
-        navbar_frame = Frame(main_frame)
+        navbar_frame = Frame(main_frame)    
         navbar_frame.pack(fill="x", pady=15)
 
         # Hostname Entry
@@ -403,8 +400,12 @@ class App:
                ).pack(side="right")
         Button(file_header_frame, command=self.searchFileName, text="Search", width=10, pady=0, foreground='teal'
                ).pack(side="right", padx=3)
-        Entry(file_header_frame, textvariable=self.search_var,
-              width=30).pack(side="right")
+        self.search_entry = Entry(file_header_frame, textvariable=self.search_var,
+                                  width=30)
+        self.search_entry.pack(side="right")
+
+        # Bind the <Return> key to the search function
+        self.search_entry.bind("<Return>", lambda event: self.searchFileName())
 
         # File Lists
         file_frame = Frame(main_frame)

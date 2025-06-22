@@ -16,4 +16,3 @@ COPY . .
 CMD ["python", "ftp_csv.py"]
 
 
-
