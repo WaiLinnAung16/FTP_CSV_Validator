@@ -1,3 +1,4 @@
+from tkinter import messagebox
 import os
 import re
 import csv
@@ -17,43 +18,91 @@ EXPECTED_HEADERS = ["batch_id", "timestamp"] + \
 
 class FTPClient:
     def __init__(self):
+        # Initialize FTP client instance and store downloaded file names
         self.ftp = None
         self.downloaded_files = []
 
     def connect(self, host, user, password):
-        self.ftp = ftplib.FTP()
-        self.ftp.connect(host)
-        self.ftp.login(user, password)
-        return True, "Connected to FTP server"
+        """
+        Connects to the FTP server using provided credentials.
+        Returns a tuple (status, message).
+        """
+        try:
+            self.ftp = ftplib.FTP()
+            self.ftp.connect(host)
+            self.ftp.login(user, password)
+            return True, "Connected to FTP server"
+        except ftplib.all_errors as e:
+            return False, f"Failed to connect: {e}"
 
     def disconnect(self):
-        self.ftp.quit()
-        return False, "Disconnected to FTP server"
-
-    def get_ftp_list(self):
-        return self.ftp.nlst()
+        """
+        Safely disconnects from the FTP server.
+        Returns a tuple (status, message).
+        """
+        if self.ftp:
+            try:
+                self.ftp.quit()  # Attempt to close the FTP connection gracefully
+            except ftplib.all_errors:
+                pass  # Ignore disconnect-related errors
+            finally:
+                self.ftp = None  # Ensure the ftp reference is cleared
+        return False, "Disconnected from FTP server"
 
     def is_connected(self):
+        """
+        Returns True if the client is currently connected to the FTP server.
+        """
         return self.ftp is not None
 
-    def search_files(self, keyword):
-        all_files = self.get_ftp_list()
-        matched_files = [f for f in all_files if keyword in f]
+    def get_file_list(self):
+        """
+        Returns a list of all files in the current directory of the FTP server.
+        Returns an empty list if not connected or on error.
+        """
+        if not self.is_connected():
+            return []
+        try:
+            return self.ftp.nlst()  # List files and directories
+        except ftplib.all_errors:
+            return []
 
+    def search_files(self, keyword):
+        """
+        Searches files on the FTP server that contain the given keyword.
+        Shows an error message if no files are found.
+        Returns a list of matched files.
+        """
+        matched_files = [f for f in self.get_file_list() if keyword in f]
         if not matched_files:
             messagebox.showerror('Error', "There is no file with this name!")
-
         return matched_files
 
     def download_file(self, filename):
-        from io import StringIO
+        """
+        Downloads the specified file from the FTP server and returns its content as a string.
+        Shows an error message if download fails.
+        """
+        if not self.is_connected():
+            raise ConnectionError("FTP client is not connected.")
+
         content = []
 
         def handle_binary(data):
-            content.append(data.decode("utf-8"))
+            # Attempt to decode binary data into UTF-8 text
+            try:
+                content.append(data.decode("utf-8"))
+            except UnicodeDecodeError:
+                # If decoding fails, ignore problematic characters
+                content.append(data.decode("utf-8", errors="ignore"))
 
-        self.ftp.retrbinary(f'RETR {filename}', callback=handle_binary)
-        return ''.join(content)
+        try:
+            self.ftp.retrbinary(f'RETR {filename}', callback=handle_binary)
+            return ''.join(content)
+        except ftplib.all_errors as e:
+            messagebox.showerror(
+                'Download Error', f"Failed to download file: {e}")
+            return ""
 
 
 class FileValidator:
@@ -160,20 +209,23 @@ class App:
 
     def ftp_client_connect(self):
         try:
-            self.ftp_client.connect(
+            status, message = self.ftp_client.connect(
                 self.host_var.get(), self.user_var.get(), self.pass_var.get())
 
-            # Change entry state to disabled
-            self.host_entry.config(state='disabled')
-            self.user_entry.config(state='disabled')
-            self.pass_entry.config(state='disabled')
+            if status is True:
+                # Change entry state to disabled
+                self.host_entry.config(state='disabled')
+                self.user_entry.config(state='disabled')
+                self.pass_entry.config(state='disabled')
 
-            # Connection Button
-            self.ftp_connect_btn.config(
-                text="Disconnect", bg='red', command=self.ftp_client_disconnect)
-            messagebox.showinfo("Success", "Connected to FTP Server")
+                # Connection Button
+                self.ftp_connect_btn.config(
+                    text="Disconnect", bg='red', command=self.ftp_client_disconnect)
+                messagebox.showinfo("Success", "Connected to FTP Server")
 
-            self.list_files()
+                self.list_files()
+            else:
+                messagebox.showerror("Error", message)
         except Exception as e:
             messagebox.showerror("Error", f"FTP connection failed: {e}")
 
@@ -203,7 +255,7 @@ class App:
 
     def list_files(self):
         try:
-            self.files = self.ftp_client.get_ftp_list()
+            self.files = self.ftp_client.get_file_list()
             self.file_listbox.delete(0, END)
             for file in self.files:
                 self.file_listbox.insert(END, file)
@@ -356,7 +408,7 @@ class App:
         # Header
         Label(navbar_header, text="FTP Connection",
               font=("Arial", 12, "bold")).pack(side="left")
-        navbar_frame = Frame(main_frame)    
+        navbar_frame = Frame(main_frame)
         navbar_frame.pack(fill="x", pady=15)
 
         # Hostname Entry

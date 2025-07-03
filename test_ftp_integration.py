@@ -1,7 +1,5 @@
 from ftp_csv import FTPClient, Logger
 from unittest.mock import patch, Mock, MagicMock
-
-
 class TestIntegration:
     def setup_method(self):
         self.ftp_client = FTPClient()
@@ -26,7 +24,7 @@ class TestIntegration:
 
         mock_ftp_instance.quit.assert_called_once()
         assert is_valid == False
-        assert message == "Disconnected to FTP server"
+        assert message == "Disconnected from FTP server"
 
     # Integration Testing
     @patch("requests.get")
@@ -50,3 +48,4 @@ class TestIntegration:
         result = client.get_uuid()
 
         assert result == "unknown_uuid"
+
