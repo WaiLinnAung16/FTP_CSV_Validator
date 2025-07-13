@@ -1,5 +1,7 @@
 from ftp_csv import FTPClient, Logger
 from unittest.mock import patch, Mock, MagicMock
+
+
 class TestIntegration:
     def setup_method(self):
         self.ftp_client = FTPClient()
@@ -48,4 +50,3 @@ class TestIntegration:
         result = client.get_uuid()
 
         assert result == "unknown_uuid"
-

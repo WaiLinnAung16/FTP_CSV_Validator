@@ -201,5 +201,5 @@ def test_error_handling():
 
 if __name__ == "__main__":
     test_file_search_function()
-    # test_header_validation()
-    # test_error_handling()
+    test_header_validation()
+    test_error_handling()
